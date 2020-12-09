@@ -1,0 +1,244 @@
+---
+title: "Actividad 2"
+output: md_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+library(readxl)
+library(tidyverse)
+library(magrittr)
+```
+
+## Creación de código 
+
+### Tasas 
+
+Primero cargamos los datos 
+
+```{r}
+indicadores<-read_xlsx("Indicadores demográficos (1).xlsx")
+```
+<div style="text-align: justify">
+Despues seleccionamos los datos de la republica en el año 2017, y los acomodamos de una manera mas amigable, donde partimos de una tabla para la población y una para defunciones, para juntarlas y hacer una tabla general 
+en la cual se incluye la tasa estandar de la población
+<div/>
+```{r}
+anio=2017
+edad<-c("00-05 años","06-11 años","12-14 años","15-17 años",
+          "17-19 años","20-24 años","25-29 años","30-49 años",
+          "50-64 años","64 años y mas")
+RepublicaPoblacion<-indicadores %>% filter(AÑO==anio,
+                                             ENTIDAD=="República Mexicana") %>% 
+    select(starts_with("P")) %>% t() %>% 
+    as.data.frame()%>%cbind(edad) 
+  colnames(RepublicaPoblacion)=c("Poblacion","Edades")
+  
+RepublicaDefuncion<-indicadores %>% filter(AÑO==anio,
+                                             ENTIDAD=="República Mexicana") %>% 
+    select(starts_with("D")) %>% t() %>% 
+    as.data.frame()%>%cbind(edad) 
+  colnames(RepublicaDefuncion)=c("Defunciones","Edades")
+  
+Republica<-Reduce(merge,list(RepublicaPoblacion,RepublicaDefuncion))
+Republica %<>%mutate(TasaEstandar=Defunciones/Poblacion*1000)
+
+Republica %>%head() %>% kable(format = "markdown") 
+```
+
+
+Ahora haremos una lista con data frames de cada uno de los estados seleccionados los cuales son Jalisco,México,Sinaloa,Tlaxcala.
+
+```{r}
+estados<-c("Jalisco","México","Sinaloa","Tlaxcala")
+Tablas<-list()
+Tasas<-data.frame()
+```
+
+Hacemos un ciclo for para guardar los data frames de los datos en la lista,adamemas para poner una tabla con las respectivas tasas de cada estado
+
+```{r}
+for (i in 1:length(estados)) {
+    edo<-indicadores %>% filter(AÑO==anio,ENTIDAD==estados[i])
+# mujeres  ----------------------------------------------------------------
+    mujeres<-edo %>% select(starts_with("M")) %>%t() %>% 
+      as.data.frame()%>%cbind(edad) 
+    colnames(mujeres)=c("Mujeres","Edades")
+# hombres  ----------------------------------------------------------------  
+    hombres<-edo %>% select(starts_with("H")) %>%t() %>% 
+      as.data.frame()%>%cbind(edad) 
+    colnames(hombres)=c("Hombres","Edades")
+# poblacion  ----------------------------------------------------------------    
+    poblacion<-edo %>% select(starts_with("P")) %>%t() %>% 
+      as.data.frame()%>%cbind(edad) 
+    colnames(poblacion)=c("Poblacion","Edades")
+# Defunciones  ----------------------------------------------------------------  
+    defunciones<-edo %>% select(starts_with("D")) %>%t() %>% 
+      as.data.frame()%>%cbind(edad) 
+    colnames(defunciones)=c("Defunciones","Edades")
+
+# Creacion de elementos de la lista con data frames   ----------------------------------------------------------------
+    Tablas[[estados[i]]]=Reduce(merge,
+                                list(mujeres,hombres,poblacion,defunciones))
+    Tablas[[estados[i]]] %<>% mutate(Defunciones_Esperadas=
+                                       Poblacion*Republica$TasaEstandar/1000)
+
+# Calculo de tasas  -----------------------------------------------------------
+    Tasabruta<-(sum(Tablas[[estados[i]]]$Defunciones)/sum(
+      Tablas[[estados[i]]]$Poblacion))*1000
+    
+    FactordeAjuste=sum(Tablas[[estados[i]]]$Defunciones)/sum(
+      Tablas[[estados[i]]]$Defunciones_Esperadas)
+    
+  TasaEstandarizada=1000*
+    sum(Republica$Defunciones)/sum(Republica$Poblacion)*FactordeAjuste
+  Tasas %<>% rbind(c(Tasabruta,FactordeAjuste,TasaEstandarizada)) 
+}
+colnames(Tasas)=c("Tasa bruta","Factor de Ajuste","Tasa Estandarizada")
+rownames(Tasas)=estados
+Tasas %<>%t() %>% as.data.frame() 
+```
+
+### Creacion de piramide 
+
+Primero creamos una lista donde guardameros todos los data frames ajustados para poder hacer la piramide 
+
+```{r}
+Piramide<-list()
+```
+
+Llenaremos la lista con un for  ya con los datos ajustados 
+
+```{r}
+ for (i in 1:length(estados)) {
+    ClasporSexo<-Tablas[[estados[i]]] %>% select(Edades,Mujeres,Hombres) %>% 
+      pivot_longer(cols = c("Hombres","Mujeres"), 
+                   names_to = "Sexo",
+                   values_to = "Poblacion por Sexo")
+    Piramide[[estados[i]]]=as.data.frame(ClasporSexo)
+  }
+```
+
+Un ejemplo de como queda la tabla ya ajustada 
+
+```{r}
+Piramide$Jalisco %>% head() %>% kable(format = "markdown")
+```
+
+Ahora creamos una lista para guardar las graficas de cada estado 
+
+```{r}
+Grafica<-list()
+```
+
+Ahora guardmos las graficas de cada estado en las lista 
+
+```{r}
+for (i in 1:length(estados)) {
+    x=Piramide[[estados[i]]]
+    plt <- ggplot(x, aes(x = `Edades`,
+                         y = `Poblacion por Sexo`,
+                         fill = Sexo))+
+      # Seccion de HOMBRES
+      geom_col(data = subset(x, Sexo == "Hombres") %>% 
+                 # Convertimos los datos de los Hombres en negativos
+                 mutate(`Poblacion por Sexo` = -`Poblacion por Sexo`),
+               width = 0.5, fill = "blue") +
+      # Seccion de MUJERES
+      geom_col(data = subset(x, Sexo == "Mujeres"),
+               width = 0.5, fill = "pink") + 
+      # Cambio de ejes de coordenadas
+      coord_flip() + 
+      scale_y_continuous(
+        breaks = c(seq(-(max(x$`Poblacion por Sexo`)+10000), 
+                       -50000, by = max(x$`Poblacion por Sexo`)/5), 
+                   seq(0, max(x$`Poblacion por Sexo`)+10000, 
+                       by = max(x$`Poblacion por Sexo`)/5)),
+        labels = c(seq(-(max(x$`Poblacion por Sexo`)+10000), -50000, 
+                       by = max(x$`Poblacion por Sexo`)/5) * -1, 
+                   seq(0,max(x$`Poblacion por Sexo`)+10000, 
+                       by =max(x$`Poblacion por Sexo`)/5)))+
+      ggtitle(str_c(estados[i]," en el año ",anio))
+    Grafica[[estados[i]]]=plt
+  }
+```
+
+
+## Resultados 
+
+### Gráfiacas y tablas de cada estado 
+
+### Jalisco 
+
+
+##### Tabla 
+```{r}
+Tablas$Jalisco %>% kable(format = "markdown")
+```
+
+##### Gráfica 
+
+```{r}
+Grafica$Jalisco
+```
+
+### México 
+
+
+##### Tabla 
+```{r}
+Tablas$México %>% kable(format = "markdown")
+```
+
+##### Gráfica 
+
+```{r}
+Grafica$México
+```
+
+### Sinaloa
+
+##### Tabla 
+```{r}
+Tablas$Sinaloa %>% kable(format = "markdown")
+```
+
+##### Gráfica 
+
+```{r}
+Grafica$Sinaloa
+```
+
+### Tlaxcala
+
+##### Tabla 
+```{r}
+Tablas$Tlaxcala %>% kable(format = "markdown")
+```
+
+##### Gráfica 
+
+```{r}
+Grafica$Tlaxcala
+```
+
+### Concluciones sobre las piramides
+
+<div style="text-align: justify">
+Podemos observar en la pirámide poblacional referente al año 2017 correspondiente a los estados de Jalisco, Estado de México, Tlaxcala y Sinaloa, que presentan una base estrecha y la cúspide un poco más dilatada con lo que podemos considerar una estructura de población adulta (aproximadamente de entre 25 a 64 años) debido a que se observa una baja fecundidad en este año. En este caso, lo menores de 20 años representan aproximadamente sólo el 20 % de la población total de los 4 estados antes mencionados, los ancianos menos del 10% y la población adulta más del 70%.
+<div/>
+
+## Tasas
+
+```{r}
+Tasas %>% kable(format = "markdown")
+```
+
+### Concluciones sobre las tasas 
+
+<div style="text-align: justify">
+Si observamos las tasas brutas obtenidas para cada uno de los estados podemos observar que estos tienen un comportamiento muy similar en cuanto a mortalidad durante el año 2017. El estado que tiene una mortalidad más alta es Sinaloa y el estado con mortalidad mas baja es el Estado de México.
+Ahora bien, si quitamos el efecto por distribución de edad, al obtener nuestras tasas estandarizadas podemos darnos cuenta de que los resultados no cambian mucho a los de las tasas brutas.
+Por lo que podemos concluir que para año 2017 en los estados de Jalisco, Sinaloa, Estado de México y Tlaxcala la mortalidad es muy similar.
+<div/>
